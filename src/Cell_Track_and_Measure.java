@@ -3,9 +3,9 @@ import java.awt.event.*;
 // import java.util.*;
 import ij.*;
 import ij.Menus.*; // used to check if CellMagicWandTool available
-// import ij.process.*;
+import ij.process.*;
 import ij.gui.*;
-// import ij.measure.ResultsTable;
+import ij.measure.ResultsTable;
 import ij.plugin.PlugIn;
 import ij.plugin.frame.*;
 // import java.awt.datatransfer.*;
@@ -118,11 +118,11 @@ ClipboardOwner, KeyListener, */ {
                     cmwt.showOptionsDialog();
                     break;
                 case Cell_Track_and_Measure.BTN_OVERLAY:
-                    createOverlay();
+                    trackCells(true);
                     // vytvorit overlay
                     break;
                 case Cell_Track_and_Measure.BTN_MEASURE:
-                    measureCells();
+                    trackCells(false);
                     break;
             }
         }
@@ -147,13 +147,6 @@ ClipboardOwner, KeyListener, */ {
                         String channelName = imp.getProp("[Channel "+i+" Parameters] DyeName");
                         channelChoice.add(channelName!="" ? channelName : "Channel "+i);
                     }
-                    // imp.getNChannels()       == 2
-                    // imp.getImageStackSize()  == 664
-                    // imp.getNDimensions()     == 4
-                    // imp.getNFrames()         == 332
-                    // imp.getNSlices()         == 1
-                    // imp.getStackSize()       == 664
-                    //IJ.showMessage(imp.getProp("[Channel 1 Parameters] DyeName"));
                     ImageCanvas canvas = imp.getCanvas();
                     if (canvas != previousCanvas) {
                         if (previousCanvas != null)
@@ -175,13 +168,91 @@ ClipboardOwner, KeyListener, */ {
 		}
 	} // Cell_Track_and_Measure.run()
 
-    public void createOverlay() {
+    /** Tracks the selected cells within the selected channel 
+        and creates an overlay or measures the cells based 
+        on the parameter <code>overlay</code>.
+        */
+    public void trackCells(boolean overlay) {
+        Roi[] rois = roiManager.getSelectedRoisAsArray(); // list of created ROIs
 
+        if (rois.length > 0) { // only proceed if we have at least 1 ROI
+            ImagePlus imp = WindowManager.getCurrentImage();
+            ImageStatistics stat = new ImageStatistics();
+            ij.measure.Calibration calib = imp.getCalibration();
+            int frames = imp.getNFrames(); 
+            int channelCount = channelChoice.getItemCount();
+            ResultsTable res = new ResultsTable();
+            Overlay ovr = new Overlay();
+            double[] sum, sqSum;
+
+            IJ.showStatus("Tracking "+rois.length+" cell"+(rois.length > 1 ? "s" : "")+" in "+frames+" frames ...");
+
+            for (int frame = 0; frame < frames; frame++) { // for each frame
+                IJ.showProgress(frame+1, frames);
+                // setPosition requires 1-based indices !
+                /* @TODO: maybe some day support for more then 1 slice could be added... */
+                imp.setPosition(channelChoice.getSelectedIndex()+1, 1, frame+1); 
+
+                sum = new double[channelCount];
+                sqSum = new double[channelCount];
+
+                if (!overlay) res.incrementCounter();
+
+                for (var roiIndex = 0; roiIndex < rois.length; roiIndex++) { //for each ROI in the frame
+                    Roi tmpRoi = rois[roiIndex];
+                    imp.setRoi(tmpRoi);
+                    if (frame > 0) { // on all but 1st frame regenerate the ROI from the center of the ROI
+                        stat = imp.getStatistics(ij.measure.Measurements.CENTROID); // get current ROI statistics
+                        tmpRoi = cmwt.makeRoi(
+                            (int) Math.round(stat.xCentroid / calib.pixelWidth), 
+                            (int) Math.round(stat.yCentroid / calib.pixelHeight), 
+                            imp
+                        ); // regenerate the ROI from the center of the ROI
+                        rois[roiIndex] = tmpRoi; // write the regenerated ROI back to our ROI array
+                    }
+                    for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) { // apply the ROI to all channels
+                        if (overlay) {
+                            tmpRoi.setPosition(channelIndex+1, 1, frame+1);
+                            ovr.add(tmpRoi);
+                        } else {
+                            imp.setPosition(channelIndex+1, 1, frame+1);
+                            imp.setRoi(tmpRoi);
+                            stat = imp.getStatistics(ij.measure.Measurements.MEAN);
+                            res.addValue("Cell "+(roiIndex+1)+": "+channelChoice.getItem(channelIndex), stat.mean);
+                            sum[channelIndex] += stat.mean;
+                            sqSum[channelIndex] += (stat.mean * stat.mean);
+                        }
+                    }
+
+                    if (!overlay) {
+                        res.addValue("Cell "+(roiIndex+1)+": area", stat.area);
+                    }
+                }
+
+                if (!overlay) { // compute average/error per channel
+                    for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                        double average = sum[channelIndex] / rois.length;
+                        double variance = ((sqSum[channelIndex] / rois.length) - (average * average));
+                        double error = java.lang.Math.sqrt(variance / rois.length);
+                        res.addValue("Average: "+channelChoice.getItem(channelIndex), average);
+                        res.addValue("Error: "+channelChoice.getItem(channelIndex), error);
+                    }
+                }
+            }
+
+            if (overlay) {
+                ovr.setStrokeColor(Color.red);
+                imp.setOverlay(ovr); // add the Overlay to the image
+            } else {
+                res.show("Trace data");
+                if (plotData.getState()) { // a graph was requested as well
+
+                }
+            }
+        } else {
+            IJ.showMessage("You need to add at least 1 ROI first!");
+        }
     } // Cell_Track_and_Measure.createOverlay()
-
-    public void measureCells() {
-
-    } // Cell_Track_and_Measure.measureCells()
 
     public void mouseExited(MouseEvent e) {}
     public void mouseEntered(MouseEvent e) {}
