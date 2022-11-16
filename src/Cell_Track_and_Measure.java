@@ -247,7 +247,7 @@ ClipboardOwner, KeyListener, */ {
                 for (var roiIndex = 0; roiIndex < rois.length; roiIndex++) { //for each ROI in the frame
                     Roi tmpRoi = rois[roiIndex];
                     imp.setRoi(tmpRoi);
-                    // cet current ROIs statistics in the tracking channel
+                    // get current ROIs statistics in the tracking channel
                     stat = imp.getStatistics(ij.measure.Measurements.MEAN + ij.measure.Measurements.AREA + ij.measure.Measurements.CENTROID);
                     roiX[roiIndex] = (int) Math.round(stat.xCentroid / calib.pixelWidth);
                     roiY[roiIndex] = (int) Math.round(stat.yCentroid / calib.pixelHeight);
@@ -260,11 +260,7 @@ ClipboardOwner, KeyListener, */ {
                         // previous ROI's center up to a defined max distance
                         do {
                             // generate new ROI in the centre of the previous frame's ROI
-                            tmpRoi = cmwt.makeRoi(
-                                roiX[roiIndex] + x, 
-                                roiY[roiIndex] + y, 
-                                imp
-                            ); // regenerate the ROI from the center of the ROI
+                            tmpRoi = cmwt.makeRoi(roiX[roiIndex] + x, roiY[roiIndex] + y, imp);
 
                             imp.setRoi(tmpRoi);
                             stat = imp.getStatistics(ij.measure.Measurements.MEAN + ij.measure.Measurements.AREA);
@@ -301,6 +297,7 @@ ClipboardOwner, KeyListener, */ {
                     }
                     for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) { // apply the ROI to all channels
                         if (overlay) {
+                            tmpRoi = (PolygonRoi)tmpRoi.clone();
                             tmpRoi.setPosition(channelIndex+1, 1, frameIndex+1);
                             ovr.add(tmpRoi);
                             PointRoi tmpPoint = new PointRoi(roiX[roiIndex] + x, roiY[roiIndex] + y);
