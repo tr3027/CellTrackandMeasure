@@ -25,6 +25,9 @@ ClipboardOwner, KeyListener, */ {
     private static final String CHK_PLOT_DATA = "Plot data";
     private static final String ERR_NO_CMWT = "Dependant plugin 'Cell_Magic_Wand_Tool' not installed! Please go get it from https://github.com/fitzlab/CellMagicWand";
 
+    private static final double DEFAULT_CELL_AREA_DIFF = 0.1;
+    private static final double DEFAULT_CELL_CENTER_DIST = 0.1;
+
 
     static Frame instance; // instance of this plugin
     private Thread thread; // plugin thread instance
@@ -45,12 +48,9 @@ ClipboardOwner, KeyListener, */ {
     /* maximum acceptable area difference of a ROI between two frames (1=100%) */
     double cellAreaDiff = 0.1;
 
-    /* maximum acceptable mean difference of a ROI between two frames (1=100%) */
-    double cellMeanDiff = 0.1;
-
     /* maximum distance from previous frame's ROI center to search for a cell in pixels.
        The algorithm makes maximum this number of clock-wise turns around the original center. */
-    int cellCenterDistance = 2;
+    int cellCenterDist = 2;
 
     public Cell_Track_and_Measure() {
         super(Cell_Track_and_Measure.TITLE); // set plugin window title
@@ -61,6 +61,7 @@ ClipboardOwner, KeyListener, */ {
             if (instance != null) {
                 instance.toFront();
             } else {
+                loadPrefs();
                 instance = this;
                 ImagePlus.addImageListener(this);
                 WindowManager.addWindow(this);
@@ -104,23 +105,22 @@ ClipboardOwner, KeyListener, */ {
         }
     } // Cell_Track_and_Measure.Cell_Track_and_Measure()
 
-	public void showConfigDialog() {
+	public void showPrefsDialog() {
         GenericDialog gd = new GenericDialog(Cell_Track_and_Measure.TITLE + " config");
 
         gd.addMessage("Maximum cell differences between frames");
 		gd.addNumericField("Area: ", cellAreaDiff, 1);
-		gd.addNumericField("Mean: ", cellMeanDiff, 1);
         gd.addMessage("");
-        gd.addNumericField("ROI search center distance", cellCenterDistance);
+        gd.addNumericField("ROI search center distance", cellCenterDist);
 
         gd.setResizable(false);
         gd.showDialog();
         if (gd.wasCanceled()) return;
 
-        cellAreaDiff = (double) gd.getNextNumber();
-        cellMeanDiff = (double) gd.getNextNumber();
-        cellCenterDistance = (int) gd.getNextNumber();
-	} // Cell_Track_and_Measure.
+        cellAreaDiff = (double)gd.getNextNumber();
+        cellCenterDist = (int)gd.getNextNumber();
+        savePrefs();
+	} // Cell_Track_and_Measure.showPrefsDialog()
 
 
     Button myButton(String label, boolean enabled) {
@@ -149,7 +149,7 @@ ClipboardOwner, KeyListener, */ {
                     cmwt.showOptionsDialog();
                     break;
                 case Cell_Track_and_Measure.BTN_CTAM_CONFIG:
-                    showConfigDialog();
+                    showPrefsDialog();
                     break;
                 case Cell_Track_and_Measure.BTN_OVERLAY:
                     trackCells(true);
@@ -221,8 +221,10 @@ ClipboardOwner, KeyListener, */ {
             int channelCount = channelChoice.getItemCount();
             ResultsTable res = new ResultsTable();
             Overlay ovr = new Overlay();
-            double[] sum, sqSum, roiMean, roiArea;
+            double[] sum, sqSum, roiMean, roiArea; 
+            double[] firstCellArea = new double[rois.length]; // area of the cell on the 1st frame, used to compute resize ratio on each frame
             int[] roiX, roiY;
+
 
             IJ.showStatus("Tracking "+rois.length+" cell"+(rois.length > 1 ? "s" : "")+" in "+frames+" frames ...");
 
@@ -263,20 +265,25 @@ ClipboardOwner, KeyListener, */ {
                             tmpRoi = cmwt.makeRoi(roiX[roiIndex] + x, roiY[roiIndex] + y, imp);
 
                             imp.setRoi(tmpRoi);
-                            stat = imp.getStatistics(ij.measure.Measurements.MEAN + ij.measure.Measurements.AREA);
-                            
+                            stat = imp.getStatistics(ij.measure.Measurements.MEAN + ij.measure.Measurements.AREA + ij.measure.Measurements.CENTROID);
+                            int tmpX = (int) Math.round(stat.xCentroid / calib.pixelWidth);
+                            int tmpY = (int) Math.round(stat.yCentroid / calib.pixelHeight);
+
 
                             // are we in the limits for ROI difference between frames? => found our current frame ROI!
-                            /* @TODO: both limits should come as parameters from the GUI! */
-                            if ((percDiff(roiArea[roiIndex], stat.area) < cellAreaDiff) && (percDiff(roiMean[roiIndex], stat.mean) < cellMeanDiff)) {
-                                //IJ.log("Frame: "+(frameIndex+1)+", ROI: "+(roiIndex+1)+", offset: ["+x+","+y+"]");
+                            if (
+                                (percDiff(roiArea[roiIndex], stat.area) < cellAreaDiff) &&  // area difference smaller then default 10%
+                                (tmpX >= roiX[roiIndex] - cellCenterDist) &&                 // new ROI's center within default 2px distance of original ROI
+                                (tmpX <= roiX[roiIndex] + cellCenterDist) && 
+                                (tmpY >= roiY[roiIndex] - cellCenterDist) && 
+                                (tmpY <= roiY[roiIndex] + cellCenterDist)
+                            ) {
                                 break;
                             }
-
-                            // circle arround the original ROI's center CCW to find a better ROI on current frame
+                            // circle arround the original ROI's center clock-wise to find a better ROI on current frame
                             if (row == 0 || (x == -1 && y == -row)) {
                                 row++;
-                                if (row < (cellCenterDistance+1)) {
+                                if (row < (cellCenterDist+1)) {
                                     x=0;
                                     y=-row;
                                 }
@@ -290,10 +297,11 @@ ClipboardOwner, KeyListener, */ {
                                 y--;
                             }
 
-
-                        } while (row < (cellCenterDistance+1));
-                        if (row == 3) IJ.log("Cell "+(roiIndex+1)+" not detected correctly in frame "+(frameIndex+1)+". Check the overlay!");
+                        } while (row < (cellCenterDist+1));
+                        if (row == (cellCenterDist+1)) IJ.log("Cell "+(roiIndex+1)+" not detected correctly in frame "+(frameIndex+1)+". Check the overlay!");
                         rois[roiIndex] = tmpRoi; // write the regenerated ROI back to our ROI array
+                    } else if (frameIndex == 0) {
+                        firstCellArea[roiIndex] = stat.area; // remember 1st frame ROI area
                     }
                     for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) { // apply the ROI to all channels
                         if (overlay) {
@@ -315,6 +323,7 @@ ClipboardOwner, KeyListener, */ {
 
                     if (!overlay) {
                         res.addValue("Cell "+(roiIndex+1)+": area", stat.area);
+                        res.addValue("Cell "+(roiIndex+1)+": area diff", stat.area / firstCellArea[roiIndex]);
                     }
                 }
 
@@ -358,6 +367,17 @@ ClipboardOwner, KeyListener, */ {
     public void itemStateChanged(ItemEvent e) {
         ImagePlus imp = WindowManager.getCurrentImage();
         imp.setC(channelChoice.getSelectedIndex()+1);
-    }
+    } // Cell_Track_and_Measure.itemStateChanged()
+
+    private void loadPrefs() {
+        cellAreaDiff = (double)Prefs.get("CellTrackandMeasure.cellAreaDiff", Cell_Track_and_Measure.DEFAULT_CELL_AREA_DIFF);
+        cellCenterDist = (int)Prefs.get("CellTrackandMeasure.cellCenterDist", Cell_Track_and_Measure.DEFAULT_CELL_CENTER_DIST);
+    } // Cell_Track_and_Measure.loadPrefs()
+
+    private void savePrefs() {
+        Prefs.set("CellTrackandMeasure.cellAreaDiff", cellAreaDiff);
+        Prefs.set("CellTrackandMeasure.cellCenterDist", cellCenterDist);
+        Prefs.savePreferences();
+    } // Cell_Track_and_Measure.savePrefs()
 
 } // class Cell_Track_and_Measure
