@@ -2,3 +2,4 @@ build/
 libs/
 test-data/
 sandbox/
+my_build.sh

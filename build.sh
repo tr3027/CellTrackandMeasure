@@ -1,6 +1,14 @@
-#!/bin/bash
+#!/usr/bin/env sh
+GIT_VERSION=$(git describe --abbrev --dirty --always --tags)
 
-rm -rf build/* && \
-javac -Xlint:none -proc:none -cp ./libs/ij/:./libs/cmwt/ -d build/ src/Cell_Track_and_Measure.java && \
-jar cf build/Cell_Track_and_Measure.jar -C build/ Cell_Track_and_Measure.class && \
-cp build/Cell_Track_and_Measure.jar ~/bin/Fiji.app/plugins/
+
+PLUGIN=Cell_Track_and_Measure
+BUILD_DIR=./build
+SRC_DIR=./src
+SRC_LIBS=./libs/ij:./libs/cmwt
+
+[ -d ${BUILD_DIR} ] && find ${BUILD_DIR} -name '*.class' -delete || mkdir -p ${BUILD_DIR}
+
+javac -Xlint:none -proc:none -cp ${SRC_LIBS} -d ${BUILD_DIR} ${SRC_DIR}/${PLUGIN}.java
+
+[ $? -eq 0 ] && jar cf ${BUILD_DIR}/${PLUGIN}_${GIT_VERSION}.jar -C ${BUILD_DIR}/ ${PLUGIN}.class
