@@ -24,6 +24,13 @@ ClipboardOwner, KeyListener, */ {
     private static final String CHK_ROI_ON_CLICK = "Add ROI on click";
     private static final String CHK_PLOT_DATA = "Plot data";
     private static final String ERR_NO_CMWT = "Dependant plugin 'Cell_Magic_Wand_Tool' not installed! Please go get it from https://github.com/fitzlab/CellMagicWand";
+    private static final String FMT_HEADING_CELL = "Cell %d: %s";
+    private static final String FMT_HEADING_CELL_AREA = "Cell %d: area";
+    private static final String FMT_HEADING_CELL_DIFF = "Cell %d: area diff";
+    private static final String FMT_HEADING_AVG = "Average: %s";
+    private static final String FMT_HEADING_ERR = "Error: %s";
+
+    java.awt.Color[] plotColors = {Color.red, Color.green, Color.blue, Color.black, Color.yellow, Color.orange, Color.pink, Color.gray};
 
     private static final double DEFAULT_CELL_AREA_DIFF = 0.1;
     private static final double DEFAULT_CELL_CENTER_DIST = 0.1;
@@ -202,6 +209,7 @@ ClipboardOwner, KeyListener, */ {
 		}
 	} // Cell_Track_and_Measure.run()
 
+    /** computes absulute percentual differene between two values */
     private double percDiff(double oldValue, double newValue) {
         return Math.abs((newValue - oldValue) / (oldValue));
     } // Cell_Track_and_Measure.percDiff()
@@ -227,8 +235,8 @@ ClipboardOwner, KeyListener, */ {
 
             IJ.showStatus("Tracking "+rois.length+" cell"+(rois.length > 1 ? "s" : "")+" in "+framesCount+" frames ...");
 
-            // cycle through all the frames available
-            for (int frameIndex = 0; frameIndex < framesCount; frameIndex++) {
+            // cycle through all the frames available except the last one as this one can be incomplete (partially scanned, containing blue-filled area), which kicks CMWT into exception
+            for (int frameIndex = 0; frameIndex < framesCount-1; frameIndex++) {
                 IJ.showProgress(frameIndex+1, framesCount);
 
                 // setPosition requires 1-based indices !
@@ -332,15 +340,18 @@ ClipboardOwner, KeyListener, */ {
                             imp.setPosition(channelIndex+1, 1, frameIndex+1);
                             imp.setRoi(tmpRoi);
                             stat = imp.getStatistics(ij.measure.Measurements.MEAN + ij.measure.Measurements.AREA);
-                            res.addValue("Cell "+(roiIndex+1)+": "+channelChoice.getItem(channelIndex), stat.mean);
+                            res.addValue(String.format(FMT_HEADING_CELL,roiIndex+1, channelChoice.getItem(channelIndex)), stat.mean);
+                            // res.addValue("Cell "+(roiIndex+1)+": "+channelChoice.getItem(channelIndex), stat.mean);
                             sum[channelIndex] += stat.mean;
                             sqSum[channelIndex] += (stat.mean * stat.mean);
                         }
                     }
 
                     if (!overlay) {
-                        res.addValue("Cell "+(roiIndex+1)+": area", stat.area);
-                        res.addValue("Cell "+(roiIndex+1)+": area diff", stat.area / firstCellArea[roiIndex]);
+                        res.addValue(String.format(FMT_HEADING_CELL_AREA, roiIndex+1), stat.area);
+                        res.addValue(String.format(FMT_HEADING_CELL_DIFF, roiIndex+1), stat.area / firstCellArea[roiIndex]);
+                        // res.addValue("Cell "+(roiIndex+1)+": area", stat.area);
+                        // res.addValue("Cell "+(roiIndex+1)+": area diff", stat.area / firstCellArea[roiIndex]);
                     }
                 }
 
@@ -349,8 +360,10 @@ ClipboardOwner, KeyListener, */ {
                         double average = sum[channelIndex] / rois.length;
                         double variance = ((sqSum[channelIndex] / rois.length) - (average * average));
                         double error = java.lang.Math.sqrt(variance / rois.length);
-                        res.addValue("Average: "+channelChoice.getItem(channelIndex), average);
-                        res.addValue("Error: "+channelChoice.getItem(channelIndex), error);
+                        res.addValue(String.format(FMT_HEADING_AVG, channelChoice.getItem(channelIndex)), average);
+                        res.addValue(String.format(FMT_HEADING_ERR, channelChoice.getItem(channelIndex)), error);
+                        // res.addValue("Average: "+channelChoice.getItem(channelIndex), average);
+                        // res.addValue("Error: "+channelChoice.getItem(channelIndex), error);
                     }
                 }
             }
@@ -360,7 +373,23 @@ ClipboardOwner, KeyListener, */ {
                 imp.setOverlay(ovr); // add the Overlay to the image
             } else {
                 res.show("Trace data");
-                if (plotData.getState()) { // a graph was requested as well
+                if (plotData.getState()) { // a graph was requested as wellb
+                    for (var channelIndex = 0; channelIndex < channelCount; channelIndex++) {
+                        String[] legends = new String[rois.length+1];
+                        Plot plot = new Plot(channelChoice.getItem(channelIndex), "time", "mean");
+                        for (var roiIndex = 0; roiIndex < rois.length; roiIndex++) {
+                            plot.setColor(plotColors[roiIndex]);
+                            legends[roiIndex] = String.format(FMT_HEADING_CELL, roiIndex+1, channelChoice.getItem(channelIndex));
+                            plot.add("line", res.getColumn(legends[roiIndex]));
+                        }
+                        plot.setColor(plotColors[rois.length]);
+                        legends[rois.length] = String.format(FMT_HEADING_AVG, channelChoice.getItem(channelIndex));
+                        plot.add("line", res.getColumn(legends[rois.length]));
+                        plot.setLimitsToFit(true);
+                        plot.addLegend(String.join("\t", legends));
+                        plot.draw();
+                        plot.show();
+                    }
                     /* @TODO */
                 }
             }
