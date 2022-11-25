@@ -217,19 +217,19 @@ ClipboardOwner, KeyListener, */ {
             ImagePlus imp = WindowManager.getCurrentImage();
             ImageStatistics stat = new ImageStatistics();
             ij.measure.Calibration calib = imp.getCalibration();
-            int frames = imp.getNFrames(); 
+            int framesCount = imp.getNFrames(); 
             int channelCount = channelChoice.getItemCount();
             ResultsTable res = new ResultsTable();
             Overlay ovr = new Overlay();
-            double[] sum, sqSum, roiMean, roiArea; 
+            double[] sum, sqSum, roiArea;
             double[] firstCellArea = new double[rois.length]; // area of the cell on the 1st frame, used to compute resize ratio on each frame
             int[] roiX, roiY;
 
+            IJ.showStatus("Tracking "+rois.length+" cell"+(rois.length > 1 ? "s" : "")+" in "+framesCount+" frames ...");
 
-            IJ.showStatus("Tracking "+rois.length+" cell"+(rois.length > 1 ? "s" : "")+" in "+frames+" frames ...");
-
-            for (int frameIndex = 0; frameIndex < frames; frameIndex++) { // for each frame
-                IJ.showProgress(frameIndex+1, frames);
+            // cycle through all the frames available
+            for (int frameIndex = 0; frameIndex < framesCount; frameIndex++) {
+                IJ.showProgress(frameIndex+1, framesCount);
 
                 // setPosition requires 1-based indices !
                 /* @TODO: maybe some day support for more then 1 slice could be added... */
@@ -242,22 +242,25 @@ ClipboardOwner, KeyListener, */ {
                 roiX = new int[rois.length]; 
                 roiY = new int[rois.length];
                 roiArea = new double[rois.length];
-                roiMean = new double[rois.length];
 
                 if (!overlay) res.incrementCounter();
 
                 for (var roiIndex = 0; roiIndex < rois.length; roiIndex++) { //for each ROI in the frame
-                    Roi tmpRoi = rois[roiIndex];
+                    int x=0,y=0,row=0; // used to circle around the original ROI's center if needed
+                    int bestX=0,bestY=0; // used to store best ROI match's coordinates
+                    double bestAreaDiff; // used to store best ROI match's area percentage difference to previous frame's ROI area
+                    Roi tmpRoi = rois[roiIndex]; // temporary ROI used to detect a cell -> originally initated to previous frame's ROI
                     imp.setRoi(tmpRoi);
+
                     // get current ROIs statistics in the tracking channel
                     stat = imp.getStatistics(ij.measure.Measurements.MEAN + ij.measure.Measurements.AREA + ij.measure.Measurements.CENTROID);
                     roiX[roiIndex] = (int) Math.round(stat.xCentroid / calib.pixelWidth);
                     roiY[roiIndex] = (int) Math.round(stat.yCentroid / calib.pixelHeight);
-                    roiMean[roiIndex] = stat.mean;
                     roiArea[roiIndex] = stat.area;
-                    int x=0,y=0,row=0; // used to circle around the original ROI's center if needed
+
                     if (frameIndex > 0) { // on all but 1st frame regenerate the ROI from the center of the ROI. In the first frame user created the ROI already!
                         x=y=row=0; // used to circle around the original ROI's center if needed
+                        bestAreaDiff = 999; // needs to initialize with high value befor entering the cell search loop !
                         // while our ROI is not aproximately as huge and as bright as the previous ROI generate another ROI with it's center around 
                         // previous ROI's center up to a defined max distance
                         do {
@@ -269,10 +272,10 @@ ClipboardOwner, KeyListener, */ {
                             int tmpX = (int) Math.round(stat.xCentroid / calib.pixelWidth);
                             int tmpY = (int) Math.round(stat.yCentroid / calib.pixelHeight);
 
-
+                            double pDiff = percDiff(roiArea[roiIndex], stat.area);
                             // are we in the limits for ROI difference between frames? => found our current frame ROI!
                             if (
-                                (percDiff(roiArea[roiIndex], stat.area) < cellAreaDiff) &&  // area difference smaller then default 10%
+                                (pDiff < cellAreaDiff) &&  // area difference smaller then default 10%
                                 (tmpX >= roiX[roiIndex] - cellCenterDist) &&                 // new ROI's center within default 2px distance of original ROI
                                 (tmpX <= roiX[roiIndex] + cellCenterDist) && 
                                 (tmpY >= roiY[roiIndex] - cellCenterDist) && 
@@ -280,6 +283,14 @@ ClipboardOwner, KeyListener, */ {
                             ) {
                                 break;
                             }
+
+                            // if this cell is a better match then the previous best match, then remember it's percDiff and click-position
+                            if (pDiff < bestAreaDiff) {
+                                bestAreaDiff = pDiff;
+                                bestX = roiX[roiIndex] + x;
+                                bestY = roiY[roiIndex] + y;
+                            }
+
                             // circle arround the original ROI's center clock-wise to find a better ROI on current frame
                             if (row == 0 || (x == -1 && y == -row)) {
                                 row++;
@@ -298,12 +309,18 @@ ClipboardOwner, KeyListener, */ {
                             }
 
                         } while (row < (cellCenterDist+1));
-                        if (row == (cellCenterDist+1)) IJ.log("Cell "+(roiIndex+1)+" not detected correctly in frame "+(frameIndex+1)+". Check the overlay!");
+                        if (row == (cellCenterDist+1)) {
+                            // we'e not found a perfect match => use the best possible match
+                            tmpRoi = cmwt.makeRoi(bestX, bestY, imp);
+                            IJ.log("Cell "+(roiIndex+1)+" not detected correctly in frame "+(frameIndex+1)+". Check the overlay!");
+                        }
                         rois[roiIndex] = tmpRoi; // write the regenerated ROI back to our ROI array
                     } else if (frameIndex == 0) {
                         firstCellArea[roiIndex] = stat.area; // remember 1st frame ROI area
                     }
-                    for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) { // apply the ROI to all channels
+
+                    // apply the ROI to all channels
+                    for (int channelIndex = 0; channelIndex < channelCount; channelIndex++) {
                         if (overlay) {
                             tmpRoi = (PolygonRoi)tmpRoi.clone();
                             tmpRoi.setPosition(channelIndex+1, 1, frameIndex+1);
