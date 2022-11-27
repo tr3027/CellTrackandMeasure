@@ -2,6 +2,7 @@ import java.awt.*;
 import java.awt.event.*;
 // import java.util.*;
 import ij.*;
+import ij.io.*;
 import ij.Menus.*; // used to check if CellMagicWandTool available
 import ij.process.*;
 import ij.gui.*;
@@ -10,6 +11,8 @@ import ij.plugin.PlugIn;
 import ij.plugin.frame.*;
 // import java.awt.datatransfer.*;
 import cellMagicWand.*;
+import java.time.format.DateTimeFormatter;  
+import java.time.LocalDateTime;    
 
 
 public class Cell_Track_and_Measure extends PlugInFrame implements ImageListener, ActionListener, Runnable, MouseListener, PlugIn, ItemListener/*,
@@ -23,12 +26,15 @@ ClipboardOwner, KeyListener, */ {
     private static final String LBL_CHANNEL = "Select channel to track in:";
     private static final String CHK_ROI_ON_CLICK = "Add ROI on click";
     private static final String CHK_PLOT_DATA = "Plot data";
+    private static final String CHK_AUTO_SAVE = "Auto save CSV";
     private static final String ERR_NO_CMWT = "Dependant plugin 'Cell_Magic_Wand_Tool' not installed! Please go get it from https://github.com/fitzlab/CellMagicWand";
     private static final String FMT_HEADING_CELL = "Cell %d: %s";
     private static final String FMT_HEADING_CELL_AREA = "Cell %d: area";
     private static final String FMT_HEADING_CELL_DIFF = "Cell %d: area diff";
     private static final String FMT_HEADING_AVG = "Average: %s";
     private static final String FMT_HEADING_ERR = "Error: %s";
+    private static final String FMT_PLOT_CELL = "Cell %d";
+    private static final String FMT_PLOT_AVG = "Average";
 
     java.awt.Color[] plotColors = {Color.red, Color.green, Color.blue, Color.black, Color.yellow, Color.orange, Color.pink, Color.gray};
 
@@ -36,18 +42,20 @@ ClipboardOwner, KeyListener, */ {
     private static final int DEFAULT_CELL_CENTER_DIST = 2;
     private static final boolean DEFAULT_CHK_ROI_ON_CLICK = true;
     private static final boolean DEFAULT_CHK_PLOT_DATA = true;
+    private static final boolean DEFAULT_CHK_AUTO_SAVE = true;
 
 
     static Frame instance; // instance of this plugin
     private Thread thread; // plugin thread instance
     RoiManager roiManager; // ROI manager instance
     Cell_Magic_Wand_Tool cmwt; // Cell Magic Wand Tool instance
+    String fileName, filePath; // holds the file info of the current image
 
 
     Panel panel; // plugin control panel
-    boolean bRoiOnClick, bPlotData; // used temporarily to load saved state of checkboxes
+    boolean bRoiOnClick, bPlotData, bAutoSave; // used temporarily to load saved state of checkboxes
     String trackingChannel; // used to hold last used tracking channel (to reselect it aoutomatically in every image if it exists)
-    java.awt.Checkbox roiOnClick, plotData;
+    java.awt.Checkbox roiOnClick, plotData, autoSave;
     java.awt.Choice channelChoice = new Choice();
     java.awt.Button btnOverlay, btnMeasure;
 
@@ -107,6 +115,10 @@ ClipboardOwner, KeyListener, */ {
                 plotData.addItemListener(this);
                 panel.add(plotData);
 
+                autoSave = new Checkbox(Cell_Track_and_Measure.CHK_AUTO_SAVE, bAutoSave);
+                autoSave.addItemListener(this);
+                panel.add(autoSave);
+
                 add(panel);
                 pack();
                 this.setVisible(true);
@@ -154,7 +166,7 @@ ClipboardOwner, KeyListener, */ {
     } // Cell_Track_and_Measure.imageUpdated()
 
     public void imageClosed(ImagePlus imp) {
-        imp.getCanvas().removeMouseListener(this);
+        //imp.getCanvas().removeMouseListener(this);
         // imp.getCanvas().removeKeyListener(this);
     } // Cell_Track_and_Measure.imageClosed()
 
@@ -190,15 +202,22 @@ ClipboardOwner, KeyListener, */ {
             
             ImagePlus imp = WindowManager.getCurrentImage();
             if (imp != currentImp) {    // only if another image selected
-                roiManager.reset(); // clear ROIs if switched to another image
-                roiManager.runCommand("show all"); // ensure all ROIs will be shown
                 if (imp != null) {      // if there is an image
-                    channelChoice.removeAll();
-                    for (int i = 1; i<imp.getNChannels()+1; i++) {
-                        String channelName = imp.getProp("[Channel "+i+" Parameters] DyeName");
-                        channelChoice.add(channelName!="" ? channelName : "Channel "+i);
-                    }
-                    if (!trackingChannel.isEmpty()) {
+                    FileInfo fInfo = imp.getOriginalFileInfo();
+                    try {
+                        if (!fInfo.fileName.isEmpty()) { // only if current image was loaded from a file (fails for our plots) 
+                            fileName = fInfo.fileName;
+                            filePath = fInfo.directory;
+                            // roiManager.reset(); // clear ROIs if switched to another image
+                            roiManager.runCommand("show all"); // ensure all ROIs will be shown
+                            channelChoice.removeAll();
+                            for (int i = 1; i<imp.getNChannels()+1; i++) {
+                                String channelName = imp.getProp("[Channel "+i+" Parameters] DyeName");
+                                if (channelName != null) channelChoice.add(channelName.isEmpty() ? "Channel "+i : channelName);
+                            }
+                        }
+                    } catch (Exception e) {}
+                    if (channelChoice.getItemCount() > 0 && !trackingChannel.isEmpty()) {
                         channelChoice.select(trackingChannel);
                         imp.setC(channelChoice.getSelectedIndex()+1);
                     }
@@ -215,9 +234,12 @@ ClipboardOwner, KeyListener, */ {
                     }
                     previousCanvas = null;
                 }
-                channelChoice.setEnabled(imp!=null);
-                btnOverlay.setEnabled(imp!=null);
-                btnMeasure.setEnabled(imp!=null);
+
+                boolean enableControls = channelChoice.getItemCount() > 0 && imp!=null;
+                channelChoice.setEnabled(enableControls);
+                btnOverlay.setEnabled(enableControls);
+                btnMeasure.setEnabled(enableControls);
+
                 currentImp = imp;
             }
 		}
@@ -393,16 +415,24 @@ ClipboardOwner, KeyListener, */ {
                         Plot plot = new Plot(channelChoice.getItem(channelIndex), "time", "mean");
                         for (var roiIndex = 0; roiIndex < rois.length; roiIndex++) {
                             plot.setColor(plotColors[roiIndex]);
-                            legends[roiIndex] = String.format(FMT_HEADING_CELL, roiIndex+1, channelChoice.getItem(channelIndex));
-                            plot.add("line", res.getColumn(legends[roiIndex]));
+                            legends[roiIndex] = String.format(FMT_PLOT_CELL, roiIndex+1);
+                            plot.add("line", res.getColumn(String.format(FMT_HEADING_CELL, roiIndex+1, channelChoice.getItem(channelIndex))));
                         }
                         plot.setColor(plotColors[rois.length]);
-                        legends[rois.length] = String.format(FMT_HEADING_AVG, channelChoice.getItem(channelIndex));
-                        plot.add("line", res.getColumn(legends[rois.length]));
+                        legends[rois.length] = String.format(FMT_PLOT_AVG);
+                        plot.add("line", res.getColumn(String.format(FMT_HEADING_AVG, channelChoice.getItem(channelIndex))));
                         plot.setLimitsToFit(true);
                         plot.addLegend(String.join("\t", legends));
                         plot.draw();
                         plot.show();
+                    }
+                }
+                if (autoSave.getState()) { // export data to CSV if the user enabled this option
+                    DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyMMdd_HHmmss");  
+                    // "/path/to/the/" "file" _ "yymmdd_hhmmss" .csv
+                    String fn = String.format("%s%s_%s.csv", filePath, fileName.split("\\.(?=[^\\.]+$)")[0], dtf.format(LocalDateTime.now()));
+                    if (!res.save(fn)) {
+                        IJ.showMessage("Failed to save measurements to file: "+ fn);
                     }
                 }
             }
@@ -435,11 +465,29 @@ ClipboardOwner, KeyListener, */ {
         savePrefs();
     } // Cell_Track_and_Measure.itemStateChanged()
 
+    public void windowClosed(WindowEvent e) {
+        instance = null;
+        done = true;
+        ImagePlus.removeImageListener(this);
+        ImagePlus imp = WindowManager.getCurrentImage();
+        if (imp != null){
+            ImageCanvas canvas = imp.getCanvas();
+            if(canvas != null){
+                canvas.removeMouseListener(this);
+            }
+            if(previousCanvas != null)
+                previousCanvas.removeMouseListener(this);
+        }
+        previousCanvas = null;
+        super.windowClosed(e);
+    } // Cell_Track_and_Measure.windowClosed()
+
     private void loadPrefs() {
         cellAreaDiff = Prefs.getDouble("CellTrackandMeasure.cellAreaDiff", Cell_Track_and_Measure.DEFAULT_CELL_AREA_DIFF);
         cellCenterDist = Prefs.getInt("CellTrackandMeasure.cellCenterDist", Cell_Track_and_Measure.DEFAULT_CELL_CENTER_DIST);
         bPlotData = Prefs.get("CellTrackandMeasure.chkPlotData", Cell_Track_and_Measure.DEFAULT_CHK_PLOT_DATA);
         bRoiOnClick = Prefs.get("CellTrackandMeasure.chkRoiOnClick", Cell_Track_and_Measure.DEFAULT_CHK_ROI_ON_CLICK);
+        bAutoSave = Prefs.get("CellTrackandMeasure.chkAutoSave", Cell_Track_and_Measure.DEFAULT_CHK_AUTO_SAVE);
         String track = Prefs.get("CellTrackandMeasure.trackingChannel", "");
         if (!track.isEmpty()) trackingChannel = track;
     } // Cell_Track_and_Measure.loadPrefs()
@@ -449,6 +497,7 @@ ClipboardOwner, KeyListener, */ {
         Prefs.set("CellTrackandMeasure.cellCenterDist", cellCenterDist);
         Prefs.set("CellTrackandMeasure.chkPlotData", plotData.getState());
         Prefs.set("CellTrackandMeasure.chkRoiOnClick", roiOnClick.getState());
+        Prefs.set("CellTrackandMeasure.chkAutoSave", autoSave.getState());
         if (!trackingChannel.isEmpty()) Prefs.set("CellTrackandMeasure.trackingChannel", trackingChannel);
         Prefs.savePreferences();
     } // Cell_Track_and_Measure.savePrefs()

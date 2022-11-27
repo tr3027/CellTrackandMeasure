@@ -3,9 +3,13 @@
 ## v0.2 - 2022.
 - best match used instead of last match when no ideal match was found in frame (Issue #1)
 - added graphing of the measured data (Issue #3)
-- configuration of graph outputs (Issue #4)
 - plugin preferences now completely saved into/restored from ImageJ config file
 - tracking channel will change each time an image is switched
+- ROIs won't delete anymore when another image is selected as even plots are images
+- automatic exporting of measurement data to CSV to the same path as the original file
+  (origfile.ext -> origfile_date_time.csv)
+- resolved some issues causing exceptions including Issue #5 
+- configuration of graph outputs (Issue #4)
  
 ## v0.1 (initial release) - 2022.11.22
 - cells correctly detected within image (Issue #1)
