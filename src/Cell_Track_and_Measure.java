@@ -33,7 +33,9 @@ ClipboardOwner, KeyListener, */ {
     java.awt.Color[] plotColors = {Color.red, Color.green, Color.blue, Color.black, Color.yellow, Color.orange, Color.pink, Color.gray};
 
     private static final double DEFAULT_CELL_AREA_DIFF = 0.1;
-    private static final double DEFAULT_CELL_CENTER_DIST = 0.1;
+    private static final int DEFAULT_CELL_CENTER_DIST = 2;
+    private static final boolean DEFAULT_CHK_ROI_ON_CLICK = true;
+    private static final boolean DEFAULT_CHK_PLOT_DATA = true;
 
 
     static Frame instance; // instance of this plugin
@@ -43,6 +45,8 @@ ClipboardOwner, KeyListener, */ {
 
 
     Panel panel; // plugin control panel
+    boolean bRoiOnClick, bPlotData; // used temporarily to load saved state of checkboxes
+    String trackingChannel; // used to hold last used tracking channel (to reselect it aoutomatically in every image if it exists)
     java.awt.Checkbox roiOnClick, plotData;
     java.awt.Choice channelChoice = new Choice();
     java.awt.Button btnOverlay, btnMeasure;
@@ -95,8 +99,14 @@ ClipboardOwner, KeyListener, */ {
 
                 panel.add(new Label()); // just a spacer
                 
-                panel.add(roiOnClick = new Checkbox(Cell_Track_and_Measure.CHK_ROI_ON_CLICK, true));
-                panel.add(plotData = new Checkbox(Cell_Track_and_Measure.CHK_PLOT_DATA, true));
+                roiOnClick = new Checkbox(Cell_Track_and_Measure.CHK_ROI_ON_CLICK, bRoiOnClick);
+                roiOnClick.addItemListener(this);
+                panel.add(roiOnClick);
+                
+                plotData = new Checkbox(Cell_Track_and_Measure.CHK_PLOT_DATA, bPlotData);
+                plotData.addItemListener(this);
+                panel.add(plotData);
+
                 add(panel);
                 pack();
                 this.setVisible(true);
@@ -187,6 +197,10 @@ ClipboardOwner, KeyListener, */ {
                     for (int i = 1; i<imp.getNChannels()+1; i++) {
                         String channelName = imp.getProp("[Channel "+i+" Parameters] DyeName");
                         channelChoice.add(channelName!="" ? channelName : "Channel "+i);
+                    }
+                    if (!trackingChannel.isEmpty()) {
+                        channelChoice.select(trackingChannel);
+                        imp.setC(channelChoice.getSelectedIndex()+1);
                     }
                     ImageCanvas canvas = imp.getCanvas();
                     if (canvas != previousCanvas) {
@@ -390,7 +404,6 @@ ClipboardOwner, KeyListener, */ {
                         plot.draw();
                         plot.show();
                     }
-                    /* @TODO */
                 }
             }
         } else {
@@ -411,18 +424,32 @@ ClipboardOwner, KeyListener, */ {
     } // Cell_Track_and_Measure.mouseClicked()
 
     public void itemStateChanged(ItemEvent e) {
-        ImagePlus imp = WindowManager.getCurrentImage();
-        imp.setC(channelChoice.getSelectedIndex()+1);
+        // if tracking channel changed, switch the current image to that channel
+        if (e.getSource() == channelChoice) {
+            ImagePlus imp = WindowManager.getCurrentImage();
+            imp.setC(channelChoice.getSelectedIndex()+1);
+            trackingChannel = channelChoice.getSelectedItem();
+        }
+
+        // save preferences each time any item (Checkbox/Choice) changed
+        savePrefs();
     } // Cell_Track_and_Measure.itemStateChanged()
 
     private void loadPrefs() {
-        cellAreaDiff = (double)Prefs.get("CellTrackandMeasure.cellAreaDiff", Cell_Track_and_Measure.DEFAULT_CELL_AREA_DIFF);
-        cellCenterDist = (int)Prefs.get("CellTrackandMeasure.cellCenterDist", Cell_Track_and_Measure.DEFAULT_CELL_CENTER_DIST);
+        cellAreaDiff = Prefs.getDouble("CellTrackandMeasure.cellAreaDiff", Cell_Track_and_Measure.DEFAULT_CELL_AREA_DIFF);
+        cellCenterDist = Prefs.getInt("CellTrackandMeasure.cellCenterDist", Cell_Track_and_Measure.DEFAULT_CELL_CENTER_DIST);
+        bPlotData = Prefs.get("CellTrackandMeasure.chkPlotData", Cell_Track_and_Measure.DEFAULT_CHK_PLOT_DATA);
+        bRoiOnClick = Prefs.get("CellTrackandMeasure.chkRoiOnClick", Cell_Track_and_Measure.DEFAULT_CHK_ROI_ON_CLICK);
+        String track = Prefs.get("CellTrackandMeasure.trackingChannel", "");
+        if (!track.isEmpty()) trackingChannel = track;
     } // Cell_Track_and_Measure.loadPrefs()
 
     private void savePrefs() {
         Prefs.set("CellTrackandMeasure.cellAreaDiff", cellAreaDiff);
         Prefs.set("CellTrackandMeasure.cellCenterDist", cellCenterDist);
+        Prefs.set("CellTrackandMeasure.chkPlotData", plotData.getState());
+        Prefs.set("CellTrackandMeasure.chkRoiOnClick", roiOnClick.getState());
+        if (!trackingChannel.isEmpty()) Prefs.set("CellTrackandMeasure.trackingChannel", trackingChannel);
         Prefs.savePreferences();
     } // Cell_Track_and_Measure.savePrefs()
 
