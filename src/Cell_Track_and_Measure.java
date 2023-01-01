@@ -54,7 +54,7 @@ ClipboardOwner, KeyListener, */ {
 
     Panel panel; // plugin control panel
     boolean bRoiOnClick, bPlotData, bAutoSave; // used temporarily to load saved state of checkboxes
-    String trackingChannel; // used to hold last used tracking channel (to reselect it aoutomatically in every image if it exists)
+    String trackingChannel = ""; // used to hold last used tracking channel (to reselect it aoutomatically in every image if it exists)
     java.awt.Checkbox roiOnClick, plotData, autoSave;
     java.awt.Choice channelChoice = new Choice();
     java.awt.Button btnOverlay, btnMeasure;

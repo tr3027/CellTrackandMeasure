@@ -10,6 +10,7 @@
   (origfile.ext -> origfile_date_time.csv)
 - resolved some issues causing exceptions including Issue #5 
 - configuration of graph outputs (Issue #4)
+- fixed a NullPointerException (Issue #6)
  
 ## v0.1 (initial release) - 2022.11.22
 - cells correctly detected within image (Issue #1)
