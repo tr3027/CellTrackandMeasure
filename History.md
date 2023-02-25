@@ -1,6 +1,6 @@
 # Release notes of the Cell_Track_and_Measure plugin for ImageJ
 
-## v0.2 - 2022.
+## v0.2 - 2023.01.01
 - best match used instead of last match when no ideal match was found in frame (Issue #1)
 - added graphing of the measured data (Issue #3)
 - plugin preferences now completely saved into/restored from ImageJ config file
